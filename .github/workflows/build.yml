@@ -1,7 +1,9 @@
-name: Arrow OS Revived Build (ginkgo)
+name: De-Arrow OS Build & Release (ginkgo)
 
 on:
-  workflow_dispatch: # Permite iniciar la compilación manualmente desde GitHub con un clic
+  workflow_dispatch: # Ejecución manual desde la pestaña Actions
+  schedule:
+    - cron: '0 3 10 * *' # Se ejecuta automáticamente el día 10 de cada mes
 
 jobs:
   build:
@@ -14,7 +16,7 @@ jobs:
           sudo apt-get clean
           df -h
 
-      - name: Configurar entorno e instalar dependencias
+      - name: Instalar herramientas y dependencias
         run: |
           sudo apt-get update -y
           sudo apt-get install -y git-core gnupg flex bison build-essential zip curl zlib1g-dev libc6-dev-i386 libncurses5 x11proto-core-dev libx11-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig python3 python-is-python3 jq ccache
@@ -22,33 +24,57 @@ jobs:
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
 
-      - name: Sincronizar fuentes de ArrowOS y Trees de ginkgo
+      - name: Sincronizar Código Fuente (Base Lineage 21 / Android 14)
         run: |
           mkdir -p /tmp/rom
           cd /tmp/rom
-          ~/bin/repo init -u https://github.com/ArrowOS/android_manifest.git -b arrow-13.1 --depth=1
-          git clone https://github.com/ArrowOS-Devices/android_device_xiaomi_ginkgo.git -b arrow-13.1 device/xiaomi/ginkgo
-          git clone https://github.com/ArrowOS-Devices/android_vendor_xiaomi_ginkgo.git -b arrow-13.1 vendor/xiaomi/ginkgo
-          git clone https://github.com/ArrowOS-Devices/android_kernel_xiaomi_ginkgo.git -b arrow-13.1 kernel/xiaomi/ginkgo
+          ~/bin/repo init -u https://github.com/LineageOS/android.git -b lineage-21.0 --depth=1
+          
+          # Repositorios del dispositivo Redmi Note 8 (ginkgo)
+          git clone https://github.com/LineageOS/android_device_xiaomi_ginkgo.git -b lineage-21.0 device/xiaomi/ginkgo
+          git clone https://github.com/TheMuppets/proprietary_vendor_xiaomi_ginkgo.git -b lineage-21.0 vendor/xiaomi/ginkgo
+          git clone https://github.com/LineageOS/android_kernel_xiaomi_ginkgo.git -b lineage-21.0 kernel/xiaomi/ginkgo
+          
+          # Apps ligeras de LineageOS (Cámara Aperture y Navegador Jelly)
+          git clone https://github.com/LineageOS/android_packages_apps_Aperture.git -b lineage-21.0 packages/apps/Aperture
+          git clone https://github.com/LineageOS/android_packages_apps_Jelly.git -b lineage-21.0 packages/apps/Jelly
+          
+          # GApps Core Ligeras (NikGApps Core)
+          git clone https://gitlab.com/NikGApps/vendor_nikgapps.git -b v14 vendor/nikgapps
+          
           ~/bin/repo sync -c -j8 --no-clone-bundle --no-tags
 
-      - name: Configurar CCache (Optimizador de tiempo)
+      - name: Activar CCache
         run: |
           export USE_CCACHE=1
           export CCACHE_EXEC=/usr/bin/ccache
           export CCACHE_DIR=/tmp/ccache
           ccache -M 10G
 
-      - name: Compilar Arrow OS Revived
+      - name: Compilar De-Arrow OS
         run: |
           cd /tmp/rom
           source build/envsetup.sh
-          lunch arrow_ginkgo-userdebug
+          lunch lineage_ginkgo-userdebug
+          
+          # Variables de Personalización de JJDev
+          export CUSTOM_BUILD_TYPE="De-Arrow"
+          export DEVICE_MAINTAINER="JJDev"
+          
           mka bacon -j$(nproc)
 
-      - name: Subir el archivo .zip de la ROM
+      - name: Generar Datos de OTA y Subir la ROM
         if: success()
         run: |
           cd /tmp/rom/out/target/product/ginkgo/
+          
+          # Calcular hash y tamaño del archivo .zip
+          ZIP_FILE=$(ls Lineage-*.zip || ls lineage-*.zip)
+          FILESIZE=$(stat -c%s "$ZIP_FILE")
+          FILENAME=$(basename $ZIP_FILE)
+          
+          echo "Archivo generado: $FILENAME ($FILESIZE bytes)"
+          
+          # Subir la ROM a servidor de descarga directa
           curl -sL https://git.io/file-transfer | sh
-          ./transfer wet Arrow-*.zip
+          ./transfer wet $ZIP_FILE
